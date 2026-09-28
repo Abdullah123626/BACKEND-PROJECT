@@ -124,6 +124,14 @@ export class BackendApiClient {
     return response;
   }
 
+  async resendConfirmation(email: string): Promise<{ message: string }> {
+    return this.request('/auth/resend-confirmation', {
+      method: 'POST',
+      body: { email },
+      auth: false,
+    });
+  }
+
   async forgotPassword(email: string): Promise<{ message: string }> {
     return this.request('/auth/forgot-password', {
       method: 'POST',

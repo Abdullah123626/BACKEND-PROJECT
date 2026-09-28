@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -59,13 +60,38 @@ export class AuthService {
     }
 
     return {
-      message: 'Account created successfully',
+      message: 'Account created. Please verify your email before logging in.',
       user: {
         id: data.user.id,
         email: data.user.email,
         emailConfirmedAt: data.user.email_confirmed_at,
       },
-      requiresEmailConfirmation: !data.session,
+      requiresEmailConfirmation: true,
+    };
+  }
+
+  async resendConfirmation(email: string) {
+    const { error } = await this.supabaseService
+      .getClient()
+      .auth.resend({ type: 'signup', email });
+
+    if (error) {
+      if (error.status === 429) {
+        throw new HttpException(
+          'Too many confirmation email requests. Please try again later',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+
+      if (error.status === 0 || !error.status || error.status >= 500) {
+        throw new ServiceUnavailableException(
+          'Authentication service is temporarily unavailable',
+        );
+      }
+    }
+
+    return {
+      message: 'If the account exists, a confirmation email has been sent.',
     };
   }
 
@@ -98,7 +124,16 @@ export class AuthService {
         );
       }
 
-      // Keep credential, account-existence, and verification details generic.
+      if (
+        error.message?.toLowerCase().includes('email not confirmed') ||
+        error.code === 'email_not_confirmed'
+      ) {
+        throw new ForbiddenException(
+          'Please verify your email before logging in',
+        );
+      }
+
+      // Keep credential and account-existence details generic.
       throw new UnauthorizedException('Invalid email or password');
     }
 

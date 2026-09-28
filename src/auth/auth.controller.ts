@@ -24,6 +24,12 @@ export class AuthController {
     return this.authService.login(loginDto);
   }
 
+  @Post('resend-confirmation')
+  @HttpCode(HttpStatus.OK)
+  resendConfirmation(@Body() forgotPasswordDto: ForgotPasswordDto) {
+    return this.authService.resendConfirmation(forgotPasswordDto.email);
+  }
+
   // Public endpoint for triggering an email reset flow without exposing account existence.
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)

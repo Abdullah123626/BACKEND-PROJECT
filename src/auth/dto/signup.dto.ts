@@ -21,7 +21,7 @@ export class SignupDto {
 	@IsNotEmpty()
 	@MaxLength(128)
 	@IsStrongPassword({
-		minLength: 12,
+		minLength: 8,
 		minLowercase: 1,
 		minUppercase: 1,
 		minNumbers: 1,

@@ -56,6 +56,17 @@ await api.updateMyProfile({ fullName: 'Ayesha Khan' });
 await api.logout();
 ```
 
+Signup flow:
+
+```ts
+const result = await api.signup(email, password);
+// Show "check your email"; do not treat signup as a logged-in session.
+if (result.requiresEmailConfirmation) {
+  await api.resendConfirmation(email); // only when the user requests another email
+  router.replace('/login'); // after the user confirms through the email link
+}
+```
+
 The client automatically:
 
 - Adds the bearer token to protected requests.

@@ -54,6 +54,7 @@ Public routes:
 
 - `POST /auth/signup`
 - `POST /auth/login`
+- `POST /auth/resend-confirmation`
 - `POST /auth/forgot-password`
 - `POST /auth/reset-password`
 - `POST /auth/refresh`
@@ -116,9 +117,31 @@ Success: `201 Created`
 }
 ```
 
-If Supabase email confirmation is disabled, `requiresEmailConfirmation` may be `false` and a session may be available from Supabase. The frontend should support both cases.
+The frontend should always treat signup as a verification-pending state. Show a check-email screen and send the user to the login screen only after they verify the email. The backend does not allow an unverified user to log in.
 
-### 3.2 Login
+### 3.2 Email confirmation
+
+Supabase sends the confirmation email after signup. The frontend should not create an authenticated session from signup; it should show a check-email state.
+
+If the user does not receive the email, call `POST /auth/resend-confirmation`:
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+Success: `200 OK`
+
+```json
+{
+  "message": "If the account exists, a confirmation email has been sent."
+}
+```
+
+After the user clicks the confirmation link, redirect to `/login` and perform a normal login.
+
+### 3.3 Login
 
 `POST /auth/login`
 
@@ -151,6 +174,16 @@ Success: `200 OK`
 ```
 
 Store the session in the frontend auth state. Do not display tokens to the user.
+
+Unverified login: `403 Forbidden`
+
+```json
+{
+  "statusCode": 403,
+  "message": "Please verify your email before logging in",
+  "error": "Forbidden"
+}
+```
 
 ### 3.3 Forgot password
 
@@ -374,7 +407,8 @@ Before frontend testing:
 3. Add the local frontend URL, such as `http://localhost:3001`, to Redirect URLs.
 4. Ensure the reset URL is allowed: `http://localhost:3001/reset-password` and the production equivalent.
 5. Confirm the email provider settings required by the project.
-6. Run the SQL files in `supabase/migrations` in order.
+6. In Supabase Authentication > Providers > Email, keep **Confirm email** enabled.
+7. Run the SQL files in `supabase/migrations` in order.
 
 The migrations create:
 
@@ -433,6 +467,7 @@ Before production release:
 - Do not trust a user ID supplied by the browser; this API derives identity from the bearer token.
 - Do not send `id`, `created_at`, `updated_at`, or admin fields in profile updates.
 - Do not assume signup always logs the user in; email confirmation may be required.
+- Do not enable direct login before email confirmation; the backend expects Supabase **Confirm email** to remain enabled.
 - Do not reveal whether an email exists during forgot-password.
 - Do not retry login, reset, or refresh requests aggressively after `429`.
 - Do not store or log passwords.
