@@ -1,9 +1,15 @@
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
-import helmet from 'helmet';
+import helmetImport, { type HelmetOptions } from 'helmet';
 import { AppModule } from './app.module.js';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter.js';
+
+// helmet ESM/CJS typings alag resolve hoti hain (Vercel pe CJS typings milti hain),
+// runtime pe dono cases me default export hi function hai
+const helmet = helmetImport as unknown as (
+  options?: HelmetOptions,
+) => (...args: any[]) => void;
 
 async function bootstrap() {
 
