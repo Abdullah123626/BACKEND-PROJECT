@@ -4,6 +4,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Logger,
   UnauthorizedException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -17,6 +18,8 @@ import { SupabaseService } from '../supabase/supabase.service.js';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly configService?: ConfigService,
@@ -29,6 +32,11 @@ export class AuthService {
       password: signupDto.password,
     });
     if (error) {
+      // Supabase ka asli error log karo, client ko generic message hi jata hai
+      this.logger.error(
+        `Supabase signup failed: status=${error.status} code=${error.code} message=${error.message}`,
+      );
+
       if (error.status === 0 || !error.status) {
         throw new ServiceUnavailableException(
           'Authentication service is unavailable. Check the Supabase configuration or network connection',
@@ -48,6 +56,13 @@ export class AuthService {
         );
       }
 
+      // Supabase dashboard me "Allow new users to sign up" band ho to
+      if (error.code === 'signup_disabled') {
+        throw new ForbiddenException(
+          'New account registration is currently disabled. Please try again later',
+        );
+      }
+
       throw new BadRequestException(
         error.message || 'Unable to create account',
       );
@@ -59,14 +74,19 @@ export class AuthService {
       );
     }
 
+    // "Confirm email" off ho to Supabase foran session de deta hai
+    const requiresEmailConfirmation = !data.session;
+
     return {
-      message: 'Account created. Please verify your email before logging in.',
+      message: requiresEmailConfirmation
+        ? 'Account created. Please verify your email before logging in.'
+        : 'Account created successfully. You can now log in.',
       user: {
         id: data.user.id,
         email: data.user.email,
         emailConfirmedAt: data.user.email_confirmed_at,
       },
-      requiresEmailConfirmation: true,
+      requiresEmailConfirmation,
     };
   }
 
@@ -169,6 +189,10 @@ export class AuthService {
       .auth.resetPasswordForEmail(forgotPasswordDto.email, { redirectTo });
 
     if (error) {
+      this.logger.error(
+        `Supabase password reset failed: status=${error.status} code=${error.code} message=${error.message}`,
+      );
+
       if (error.status === 0 || !error.status) {
         throw new ServiceUnavailableException(
           'Authentication service is unavailable. Check the Supabase configuration or network connection',
