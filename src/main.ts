@@ -26,7 +26,11 @@ async function bootstrap() {
 
   // CORS
   app.enableCors({
-    origin: configService.get<string>('app.corsOrigin'),
+    // CORS_ORIGIN me comma se multiple URLs de sakte hain (e.g. production + localhost)
+    origin: (configService.get<string>('app.corsOrigin') ?? '')
+      .split(',')
+      .map((url) => url.trim().replace(/\/+$/, ''))
+      .filter(Boolean),
     credentials: true,
   });
 
