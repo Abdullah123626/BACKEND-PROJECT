@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { AuthModule } from './auth/auth.module.js';
+import { RateLimitGuard } from './common/guards/rate-limit.guard.js';
 import configuration from './config/configuration.js';
 import { envValidationSchema } from './config/env.validation.js';
 import { ProfilesModule } from './profiles/profiles.module.js';
@@ -18,12 +18,6 @@ import { SupabaseModule } from './supabase/supabase.module.js';
       load: [configuration],
       validationSchema: envValidationSchema,
     }),
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60,
-        limit: 10,
-      },
-    ]),
     AuthModule,
     ProfilesModule,
     SupabaseModule,
@@ -33,7 +27,7 @@ import { SupabaseModule } from './supabase/supabase.module.js';
     AppService,
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: RateLimitGuard,
     },
   ],
 })
