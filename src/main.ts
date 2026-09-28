@@ -40,8 +40,9 @@ async function bootstrap() {
     }),
   );
 
-  // Server Start
-  const port = configService.get<number>('app.port', 3000);
-  await app.listen(port);
+  // Server Start - Vercel khud PORT deta hai, is liye process.env.PORT pehle
+  await app.listen(process.env.PORT ?? 3000);
 }
-await bootstrap();
+
+// Vercel ke official NestJS pattern ki tarah top-level await ke baghair
+void bootstrap();
