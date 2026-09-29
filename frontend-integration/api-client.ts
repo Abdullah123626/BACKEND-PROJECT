@@ -32,11 +32,12 @@ export type Profile = {
   updated_at: string;
 };
 
+// null ya "" bhejne se field clear ho jata hai
 export type UpdateProfileInput = {
-  fullName?: string;
-  phone?: string;
-  avatarUrl?: string;
-  bio?: string;
+  fullName?: string | null;
+  phone?: string | null;
+  avatarUrl?: string | null;
+  bio?: string | null;
 };
 
 type ApiErrorBody = {
@@ -173,6 +174,14 @@ export class BackendApiClient {
     } finally {
       this.tokenStore.clear();
     }
+  }
+
+  // Email confirmation link click hone ke baad hi badalta hai
+  async changeEmail(newEmail: string): Promise<{ message: string }> {
+    return this.request('/auth/change-email', {
+      method: 'POST',
+      body: { newEmail },
+    });
   }
 
   async getMyProfile(): Promise<Profile> {

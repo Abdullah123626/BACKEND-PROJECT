@@ -1,50 +1,13 @@
-import { ValidationPipe } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
-import helmetImport, { type HelmetOptions } from 'helmet';
 import { AppModule } from './app.module.js';
-import { HttpExceptionFilter } from './common/filters/http-exception.filter.js';
-
-// helmet ESM/CJS typings alag resolve hoti hain (Vercel pe CJS typings milti hain),
-// runtime pe dono cases me default export hi function hai
-const helmet = helmetImport as unknown as (
-  options?: HelmetOptions,
-) => (...args: any[]) => void;
+import { configureApp } from './app.setup.js';
 
 async function bootstrap() {
-
   // nest server application creation
   const app = await NestFactory.create(AppModule);
+  configureApp(app);
 
-  // configuration get kr ra
-  const configService = app.get(ConfigService);
-
-
-  // SECurity
-  app.use(helmet());
-  app.useGlobalFilters(new HttpExceptionFilter());
-
-  // CORS
-  app.enableCors({
-    // CORS_ORIGIN me comma se multiple URLs de sakte hain (e.g. production + localhost)
-    origin: (configService.get<string>('app.corsOrigin') ?? '')
-      .split(',')
-      .map((url) => url.trim().replace(/\/+$/, ''))
-      .filter(Boolean),
-    credentials: true,
-  });
-
-  // DTO validation
-  app.useGlobalPipes(
-    new ValidationPipe({
-      transform: true,
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      stopAtFirstError: false,
-    }),
-  );
-
-  // Server Start - Vercel khud PORT deta hai, is liye process.env.PORT pehle
+  // Server Start - Vercel/Render khud PORT dete hain, is liye process.env.PORT pehle
   await app.listen(process.env.PORT ?? 3000);
 }
 

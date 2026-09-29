@@ -27,15 +27,14 @@ The backend environment variables are separate:
 
 ```env
 NODE_ENV=production
-PORT=3000
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+# Comma-separated list allowed, e.g. https://app.example.com,http://localhost:3000
 CORS_ORIGIN=https://your-frontend.example.com
 FRONTEND_URL=https://your-frontend.example.com
 ```
 
-Never put `SUPABASE_SERVICE_ROLE_KEY` in frontend environment variables. It has admin privileges and must remain on the backend only.
+The backend only needs the Supabase anon key. Never put the Supabase service-role key anywhere in the frontend (or the backend); it bypasses all database security.
 
 ## 2. Authentication Rules
 
@@ -49,6 +48,7 @@ Protected routes:
 
 - `GET /profiles/me`
 - `PATCH /profiles/me`
+- `POST /auth/change-email`
 
 Public routes:
 
@@ -98,7 +98,7 @@ Request:
 Rules:
 
 - Email is trimmed and lowercased by the backend.
-- Password must be 12 to 128 characters.
+- Password must be 12 to 72 characters.
 - Password must contain at least one lowercase letter, uppercase letter, number, and symbol.
 - Password cannot contain spaces.
 - Unknown fields are rejected.
@@ -107,15 +107,12 @@ Success: `201 Created`
 
 ```json
 {
-  "message": "Account created successfully",
-  "user": {
-    "id": "uuid",
-    "email": "user@example.com",
-    "emailConfirmedAt": null
-  },
+  "message": "Account created. Please check your email and verify your account before logging in.",
   "requiresEmailConfirmation": true
 }
 ```
+
+Signup returns no user object and no session. A **duplicate email gets exactly the same response** (the backend does not reveal registered emails); tell users who already have an account to use "Forgot password".
 
 The frontend should always treat signup as a verification-pending state. Show a check-email screen and send the user to the login screen only after they verify the email. The backend does not allow an unverified user to log in.
 
@@ -232,11 +229,13 @@ Success: `200 OK`
 
 ```json
 {
-  "message": "Password reset successfully"
+  "message": "Password reset successfully. Please log in with your new password."
 }
 ```
 
-Rules for the new password are the same as signup. After success, clear the token from the URL and redirect the user to login.
+Rules for the new password are the same as signup, and it must differ from the current password. After success, **all sessions of the user are logged out** (including the reset link's session, so the link cannot be reused). Clear the token from the URL and redirect the user to login.
+
+Only the token from the reset email is accepted; a normal login access token is rejected. An invalid, expired, already-used or superseded link (only the latest reset email works) returns `401`. Show a "request a new link" message in that case.
 
 Do not send the refresh token to this endpoint. Do not put the access token in application logs, analytics, query strings, or error reports.
 
@@ -291,6 +290,8 @@ Success: `200 OK`
   "message": "Logout successful"
 }
 ```
+
+`refreshToken` is optional, and the backend also accepts `Authorization: Bearer <accessToken>`. Send whichever you have. The backend revokes this session on Supabase, so the old tokens stop working immediately. An already expired or invalid session still returns `200`.
 
 The frontend must clear its local access token, refresh token, user state, and cached profile after calling logout, even if the user is already expired.
 
@@ -348,13 +349,35 @@ Field limits:
 | Field | Type | Limit |
 | --- | --- | --- |
 | `fullName` | string | max 100 characters |
-| `phone` | string | max 30 characters; digits, spaces, `+`, parentheses, dots, and hyphens |
+| `phone` | string | international format with country code, e.g. `+92 300 1234567`; stored normalized as `+923001234567` |
 | `avatarUrl` | URL | max 2048 characters; must use `http` or `https` |
 | `bio` | string | max 500 characters |
 
-At least one field is required. `id`, timestamps, email, role, password, and admin fields cannot be changed through this endpoint. Unknown fields are rejected.
+At least one field is required. `null`, an empty string, or only spaces **clears** a field (stored as `null`). `id`, timestamps, email, role, password, and admin fields cannot be changed through this endpoint. Unknown fields are rejected.
 
 Success: `200 OK`, returning the updated profile in the same shape as `GET /profiles/me`.
+
+If a profile is missing, `GET /profiles/me` creates an empty one, so the frontend does not need a 404 "profile setup" state.
+
+### 3.9 Change email
+
+`POST /auth/change-email` (requires `Authorization: Bearer <accessToken>`)
+
+```json
+{
+  "newEmail": "new@example.com"
+}
+```
+
+Success: `200 OK`
+
+```json
+{
+  "message": "Confirmation email sent. Your email will change only after you confirm the link sent to your email."
+}
+```
+
+The email does **not** change until the user clicks the Supabase confirmation link (with Secure email change, links go to both addresses). Errors: `400` for the same or an invalid email, `409` if the email is already in use, `429` if rate limited, `401` if the session expired.
 
 ## 4. Error Handling
 
@@ -384,7 +407,8 @@ Frontend handling:
 | --- | --- | --- |
 | `400` | Invalid body or request | Show field errors or a safe message |
 | `401` | Missing/expired/invalid auth | Try refresh once, then log out |
-| `404` | Profile does not exist | Show profile setup or retry state |
+| `403` | Email not verified / signups disabled | Show the message (e.g. ask to verify email) |
+| `409` | Email already in use (email change) | Ask for a different email |
 | `429` | Too many requests | Show a wait message; do not immediately retry |
 | `500` | Backend failure | Show a generic retry message |
 | `503` | Supabase temporarily unavailable | Show a temporary service message |
@@ -408,7 +432,8 @@ Before frontend testing:
 4. Ensure the reset URL is allowed: `http://localhost:3001/reset-password` and the production equivalent.
 5. Confirm the email provider settings required by the project.
 6. In Supabase Authentication > Providers > Email, keep **Confirm email** enabled.
-7. Run the SQL files in `supabase/migrations` in order.
+7. Run the SQL files in `supabase/migrations` in order (`001` to `004`).
+8. Configure custom SMTP (Authentication > Emails). The built-in mailer only delivers to project team members.
 
 The migrations create:
 
@@ -439,8 +464,8 @@ A generic deployment sequence for Render, Railway, Fly.io, or another Node host:
 2. Install command: `npm ci`.
 3. Build command: `npm run build`.
 4. Start command: `npm run start:prod`.
-5. Configure `PORT` using the host-provided port when required.
-6. Set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` as server-side secrets.
+5. Do not set `PORT`; the host provides it.
+6. Set `SUPABASE_URL` and `SUPABASE_ANON_KEY` as server-side environment variables (the service-role key is not needed).
 7. Set `CORS_ORIGIN` to the exact deployed frontend origin.
 8. Set `FRONTEND_URL` to the deployed frontend origin.
 9. Apply Supabase migrations before accepting traffic.

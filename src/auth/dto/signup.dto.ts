@@ -1,34 +1,12 @@
-import { Transform } from 'class-transformer';
 import {
-	IsEmail,
-	IsNotEmpty,
-	IsStrongPassword,
-	IsString,
-	Matches,
-	MaxLength,
-} from 'class-validator';
+	IsNormalizedEmail,
+	IsStrongAppPassword,
+} from '../../common/validation/auth-fields.js';
 
 export class SignupDto {
-	@Transform(({ value }) =>
-		typeof value === 'string' ? value.trim().toLowerCase() : value,
-	)
-	@IsEmail()
-	@IsNotEmpty()
-	@MaxLength(254)
+	@IsNormalizedEmail()
 	email!: string;
 
-	@IsString()
-	@IsNotEmpty()
-	@MaxLength(128)
-	@IsStrongPassword({
-		minLength: 8,
-		minLowercase: 1,
-		minUppercase: 1,
-		minNumbers: 1,
-		minSymbols: 1,
-	})
-	@Matches(/^\S+$/, {
-		message: 'Password must not contain spaces',
-	})
+	@IsStrongAppPassword()
 	password!: string;
 }

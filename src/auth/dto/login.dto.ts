@@ -1,17 +1,12 @@
-import { Transform } from 'class-transformer';
-import { IsEmail, IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import {
+	IsLoginPassword,
+	IsNormalizedEmail,
+} from '../../common/validation/auth-fields.js';
 
 export class LoginDto {
-	@Transform(({ value }) =>
-		typeof value === 'string' ? value.trim().toLowerCase() : value,
-	)
-	@IsEmail()
-	@IsNotEmpty()
-	@MaxLength(254)
+	@IsNormalizedEmail()
 	email!: string;
 
-	@IsString()
-	@IsNotEmpty()
-	@MaxLength(128)
+	@IsLoginPassword()
 	password!: string;
 }

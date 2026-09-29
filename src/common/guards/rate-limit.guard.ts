@@ -1,71 +1,71 @@
 import {
-  CanActivate,
-  ExecutionContext,
-  HttpException,
-  HttpStatus,
-  Injectable,
+	CanActivate,
+	ExecutionContext,
+	HttpException,
+	HttpStatus,
+	Injectable,
+	SetMetadata,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
+import { AttemptCounter } from '../security/attempt-counter.js';
+import { getClientIp } from '../security/client-ip.js';
 
 // @nestjs/throttler CommonJS hai aur Nest 12 (ESM-only) ko require() karta hai,
-// jo Vercel pe ERR_REQUIRE_ESM deta hai. Is liye ye chhota in-memory limiter use ho raha.
-const WINDOW_MS = 60_000;
-const MAX_REQUESTS = 10;
+// jo Vercel pe ERR_REQUIRE_ESM deta hai. Is liye apna chhota limiter.
+export type RateLimitOptions = {
+	limit: number;
+	windowMs: number;
+};
 
-interface Hit {
-  count: number;
-  resetAt: number;
-}
+const RATE_LIMIT_KEY = 'rateLimit';
+const DEFAULT_LIMIT: RateLimitOptions = { limit: 60, windowMs: 60_000 };
+
+// Sensitive routes pe sakht limit lagane ke liye: @RateLimit({ limit: 5, windowMs: 60_000 })
+export const RateLimit = (options: RateLimitOptions) =>
+	SetMetadata(RATE_LIMIT_KEY, options);
 
 @Injectable()
 export class RateLimitGuard implements CanActivate {
-  private readonly hits = new Map<string, Hit>();
+	private readonly counters = new Map<string, AttemptCounter>();
 
-  canActivate(context: ExecutionContext): boolean {
-    const http = context.switchToHttp();
-    const request = http.getRequest<Request>();
-    const response = http.getResponse<Response>();
-    const now = Date.now();
+	constructor(private readonly reflector: Reflector) {}
 
-    this.removeExpired(now);
+	canActivate(context: ExecutionContext): boolean {
+		const options =
+			this.reflector.getAllAndOverride<RateLimitOptions>(RATE_LIMIT_KEY, [
+				context.getHandler(),
+				context.getClass(),
+			]) ?? DEFAULT_LIMIT;
 
-    const key = `${this.getClientIp(request)}:${request.method}:${request.path}`;
-    let hit = this.hits.get(key);
-    if (!hit || hit.resetAt <= now) {
-      hit = { count: 0, resetAt: now + WINDOW_MS };
-      this.hits.set(key, hit);
-    }
-    hit.count++;
+		const http = context.switchToHttp();
+		const request = http.getRequest<Request>();
+		const response = http.getResponse<Response>();
 
-    const retryAfterSeconds = Math.ceil((hit.resetAt - now) / 1000);
-    response.setHeader('X-RateLimit-Limit', MAX_REQUESTS);
-    response.setHeader(
-      'X-RateLimit-Remaining',
-      Math.max(0, MAX_REQUESTS - hit.count),
-    );
+		// Route ke hisaab se alag counter, key = IP + method + path
+		const routeKey = `${request.method}:${request.route?.path ?? request.path}`;
+		const counter = this.getCounter(routeKey, options);
+		const result = counter.hit(`${getClientIp(request)}:${routeKey}`);
 
-    if (hit.count > MAX_REQUESTS) {
-      response.setHeader('Retry-After', retryAfterSeconds);
-      throw new HttpException(
-        'Too many requests. Please try again later',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
+		response.setHeader('X-RateLimit-Limit', options.limit);
+		response.setHeader('X-RateLimit-Remaining', result.remaining);
 
-    return true;
-  }
+		if (!result.allowed) {
+			response.setHeader('Retry-After', result.retryAfterSeconds);
+			throw new HttpException(
+				'Too many requests. Please try again later',
+				HttpStatus.TOO_MANY_REQUESTS,
+			);
+		}
+		return true;
+	}
 
-  // Vercel/proxy ke peeche asli client IP x-forwarded-for me hota hai
-  private getClientIp(request: Request): string {
-    const forwarded = request.headers['x-forwarded-for'];
-    const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
-    return first?.split(',')[0]?.trim() || request.ip || 'unknown';
-  }
-
-  private removeExpired(now: number) {
-    if (this.hits.size < 1000) return;
-    for (const [key, hit] of this.hits) {
-      if (hit.resetAt <= now) this.hits.delete(key);
-    }
-  }
+	private getCounter(routeKey: string, options: RateLimitOptions): AttemptCounter {
+		let counter = this.counters.get(routeKey);
+		if (!counter) {
+			counter = new AttemptCounter(options.limit, options.windowMs);
+			this.counters.set(routeKey, counter);
+		}
+		return counter;
+	}
 }

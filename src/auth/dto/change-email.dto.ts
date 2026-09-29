@@ -1,6 +1,6 @@
 import { IsNormalizedEmail } from '../../common/validation/auth-fields.js';
 
-export class ForgotPasswordDto {
+export class ChangeEmailDto {
 	@IsNormalizedEmail()
-	email!: string;
+	newEmail!: string;
 }

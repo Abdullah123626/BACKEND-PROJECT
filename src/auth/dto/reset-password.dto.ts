@@ -1,29 +1,13 @@
-import {
-	IsNotEmpty,
-	IsStrongPassword,
-	IsString,
-	Matches,
-	MaxLength,
-} from 'class-validator';
+import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { IsStrongAppPassword } from '../../common/validation/auth-fields.js';
 
 export class ResetPasswordDto {
-	@IsString()
-	@IsNotEmpty()
-	@MaxLength(4096)
+	// Reset link se mila recovery access token
+	@IsString({ message: 'Reset token must be a string' })
+	@IsNotEmpty({ message: 'Reset token is required' })
+	@MaxLength(4096, { message: 'Reset token is invalid' })
 	accessToken!: string;
 
-	@IsString()
-	@IsNotEmpty()
-	@MaxLength(128)
-	@IsStrongPassword({
-		minLength: 12,
-		minLowercase: 1,
-		minUppercase: 1,
-		minNumbers: 1,
-		minSymbols: 1,
-	})
-	@Matches(/^\S+$/, {
-		message: 'Password must not contain spaces',
-	})
+	@IsStrongAppPassword()
 	password!: string;
 }
