@@ -5,6 +5,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { configureApp } from '../src/app.setup.js';
+import { createSwaggerDocument } from '../src/app.swagger.js';
 import { AuthController } from '../src/auth/auth.controller.js';
 import { AuthService } from '../src/auth/auth.service.js';
 import { RateLimitGuard } from '../src/common/guards/rate-limit.guard.js';
@@ -325,6 +326,40 @@ describe('Auth & Profile API (HTTP)', () => {
     it('does not echo the submitted password in validation errors', async () => {
       const response = await http().post('/auth/signup').send({ email: 'a@example.com', password: 'weakpass1' }).expect(400);
       expect(JSON.stringify(response.body)).not.toContain('weakpass1');
+    });
+  });
+
+  describe('Swagger / OpenAPI document', () => {
+    it('documents every endpoint, the bearer auth and the request/response schemas', () => {
+      const doc = createSwaggerDocument(app);
+      const paths = doc.paths;
+
+      for (const path of [
+        '/auth/signup',
+        '/auth/login',
+        '/auth/resend-confirmation',
+        '/auth/forgot-password',
+        '/auth/reset-password',
+        '/auth/refresh',
+        '/auth/logout',
+        '/auth/change-email',
+      ]) {
+        expect(paths[path]?.post, path).toBeDefined();
+      }
+      expect(paths['/profiles/me']?.get).toBeDefined();
+      expect(paths['/profiles/me']?.patch).toBeDefined();
+
+      // Protected routes pe lock (bearer), public signup pe nahi
+      expect(paths['/profiles/me']!.get!.security).toEqual([{ bearer: [] }]);
+      expect(paths['/auth/change-email']!.post!.security).toEqual([{ bearer: [] }]);
+      expect(paths['/auth/signup']!.post!.security).toBeUndefined();
+
+      const schemas = doc.components!.schemas!;
+      expect(Object.keys((schemas.SignupDto as any).properties)).toEqual(['email', 'password']);
+      expect((schemas.SignupDto as any).properties.password).toMatchObject({ minLength: 12, maxLength: 72 });
+      expect(Object.keys((schemas.UpdateProfileDto as any).properties)).toEqual(['fullName', 'phone', 'avatarUrl', 'bio']);
+      expect(paths['/auth/signup']!.post!.responses).toHaveProperty('409');
+      expect(paths['/profiles/me']!.get!.responses['200']).toBeDefined();
     });
   });
 

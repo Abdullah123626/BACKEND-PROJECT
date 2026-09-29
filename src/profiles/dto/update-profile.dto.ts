@@ -1,3 +1,4 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
 	IsOptional,
@@ -27,6 +28,13 @@ const NO_CONTROL_CHARS = /^[^\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]*$/;
 const NO_CONTROL_CHARS_SINGLE_LINE = /^[^\u0000-\u001F\u007F]*$/;
 
 export class UpdateProfileDto {
+	@ApiPropertyOptional({
+		description: 'Full name. `null` or an empty string clears it.',
+		example: 'Ayesha Khan',
+		maxLength: 100,
+		nullable: true,
+		type: String,
+	})
 	@IsOptional()
 	@Transform(trimToNull)
 	@IsString({ message: 'Full name must be a string' })
@@ -36,6 +44,13 @@ export class UpdateProfileDto {
 	})
 	fullName?: string | null;
 
+	@ApiPropertyOptional({
+		description:
+			'International format with country code. Spaces, dashes, dots and brackets are removed ("+92 300-123 4567" is stored as "+923001234567"). `null` or an empty string clears it.',
+		example: '+92 300 1234567',
+		nullable: true,
+		type: String,
+	})
 	@IsOptional()
 	@Transform(normalizePhone)
 	@IsString({ message: 'Phone number must be a string' })
@@ -45,6 +60,14 @@ export class UpdateProfileDto {
 	})
 	phone?: string | null;
 
+	@ApiPropertyOptional({
+		description: 'http/https image URL. `null` or an empty string clears it.',
+		example: 'https://example.com/avatar.png',
+		format: 'uri',
+		maxLength: 2048,
+		nullable: true,
+		type: String,
+	})
 	@IsOptional()
 	@Transform(trimToNull)
 	@IsString({ message: 'Avatar URL must be a string' })
@@ -55,6 +78,13 @@ export class UpdateProfileDto {
 	)
 	avatarUrl?: string | null;
 
+	@ApiPropertyOptional({
+		description: 'Short bio (newlines allowed). `null` or an empty string clears it.',
+		example: 'Backend developer',
+		maxLength: 500,
+		nullable: true,
+		type: String,
+	})
 	@IsOptional()
 	@Transform(trimToNull)
 	@IsString({ message: 'Bio must be a string' })

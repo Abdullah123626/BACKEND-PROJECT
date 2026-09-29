@@ -9,6 +9,8 @@ Backend base URLs:
 - Local: `http://localhost:3001` (the frontend runs on `http://localhost:3000`)
 - Production: use the deployed backend URL, for example `https://api.example.com`
 
+Interactive API docs (Swagger UI) are served by the backend at `<backend-url>/docs` (for example `http://localhost:3001/docs`), and the OpenAPI JSON at `<backend-url>/docs/json`. You can use the JSON to generate a typed client. To call protected endpoints from Swagger, log in via `POST /auth/login`, click **Authorize** and paste `session.accessToken`.
+
 The frontend should keep the URL in an environment variable, not hard-code it in components.
 
 Example frontend environment variables:

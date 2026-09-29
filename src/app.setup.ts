@@ -18,8 +18,18 @@ export function configureApp(app: INestApplication) {
   // aur client ka apna X-Forwarded-For header rate limit ko bypass na kar sake.
   (app as NestExpressApplication).set('trust proxy', 1);
 
-  // Security headers
-  app.use(helmet());
+  // Security headers. CSP me sirf Swagger UI wala CDN allow (baaki helmet defaults).
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          'script-src': ["'self'", 'https://cdn.jsdelivr.net'],
+          'style-src': ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
+          'img-src': ["'self'", 'data:', 'https://cdn.jsdelivr.net'],
+        },
+      },
+    }),
+  );
   app.useGlobalFilters(new HttpExceptionFilter());
 
   // CORS_ORIGIN me comma se multiple URLs de sakte hain (e.g. production + localhost)

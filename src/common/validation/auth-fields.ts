@@ -1,4 +1,5 @@
 import { applyDecorators } from '@nestjs/common';
+import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
 	IsEmail,
@@ -20,6 +21,12 @@ export const PASSWORD_POLICY_MESSAGE = `Password must be ${PASSWORD_MIN_LENGTH}-
 // Email trim + lowercase, taake "  User@Mail.com " aur "user@mail.com" ek hi account hon.
 export function IsNormalizedEmail() {
 	return applyDecorators(
+		ApiProperty({
+			description: 'Email address. Trimmed and lowercased by the server.',
+			example: 'user@example.com',
+			format: 'email',
+			maxLength: EMAIL_MAX_LENGTH,
+		}),
 		Transform(({ value }) =>
 			typeof value === 'string' ? value.trim().toLowerCase() : value,
 		),
@@ -32,6 +39,13 @@ export function IsNormalizedEmail() {
 
 export function IsStrongAppPassword() {
 	return applyDecorators(
+		ApiProperty({
+			description: `${PASSWORD_POLICY_MESSAGE}. No spaces.`,
+			example: 'Str0ng!Passw0rd',
+			format: 'password',
+			minLength: PASSWORD_MIN_LENGTH,
+			maxLength: PASSWORD_MAX_LENGTH,
+		}),
 		IsString({ message: 'Password must be a string' }),
 		IsNotEmpty({ message: 'Password is required' }),
 		MaxLength(PASSWORD_MAX_LENGTH, { message: PASSWORD_POLICY_MESSAGE }),
@@ -52,6 +66,12 @@ export function IsStrongAppPassword() {
 // Login pe policy check nahi hoti (purane passwords bhi chalne chahiye), sirf basic limits.
 export function IsLoginPassword() {
 	return applyDecorators(
+		ApiProperty({
+			description: 'Account password',
+			example: 'Str0ng!Passw0rd',
+			format: 'password',
+			maxLength: PASSWORD_MAX_LENGTH,
+		}),
 		IsString({ message: 'Password must be a string' }),
 		IsNotEmpty({ message: 'Password is required' }),
 		MaxLength(PASSWORD_MAX_LENGTH, { message: 'Password is too long' }),

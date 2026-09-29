@@ -7,6 +7,8 @@ export const envValidationSchema = Joi.object({
   PORT: Joi.number().port().default(3000),
   CORS_ORIGIN: Joi.string().default('http://localhost:3000'),
   FRONTEND_URL: Joi.string().uri().default('http://localhost:3000'),
+  // /docs par Swagger UI; "false" se band
+  SWAGGER_ENABLED: Joi.string().valid('true', 'false').default('true'),
   // Supabase ke baghair app chal hi nahi sakti, is liye start pe hi saaf error
   SUPABASE_URL: Joi.string().uri().required(),
   SUPABASE_ANON_KEY: Joi.string().required(),
