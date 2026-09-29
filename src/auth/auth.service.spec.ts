@@ -16,6 +16,11 @@ function authError(status: number | undefined, code?: string, message = 'interna
   return { status, code, message, name: 'AuthApiError' };
 }
 
+// auth-js 2.117+: network failure (status 0) aur 5xx dono isi naam se aate hain.
+function retryableError(status: number, code?: string) {
+  return { status, code, message: 'internal supabase detail', name: 'AuthRetryableFetchError' };
+}
+
 async function expectStatus(promise: Promise<unknown>, status: number) {
   const error = await promise.then(
     () => undefined,
@@ -102,20 +107,78 @@ describe('AuthService', () => {
       expect(JSON.stringify(result)).not.toContain(PASSWORD);
     });
 
-    it('returns the same response for a duplicate email (no account enumeration)', async () => {
-      mocks.signUp.mockResolvedValueOnce({
-        data: { user: { id: 'u1', identities: [{ id: 'i1' }] }, session: null },
-        error: null,
-      });
-      const fresh = await service.signup({ email: 'new@example.com', password: PASSWORD });
-
+    it('returns 409 for an email that already has a verified account', async () => {
+      // Supabase (confirm ON) duplicate pe khali identities wala nakli user bhejta hai
       mocks.signUp.mockResolvedValueOnce({
         data: { user: { id: 'obfuscated', identities: [] }, session: null },
         error: null,
       });
-      const duplicate = await service.signup({ email: 'taken@example.com', password: PASSWORD });
+      const thrown = await expectStatus(service.signup({ email: 'taken@example.com', password: PASSWORD }), 409);
+      expect(thrown.message).toContain('already exists');
+    });
 
-      expect(duplicate).toEqual(fresh);
+    it('treats a brand-new account (confirmation sent right away) as new', async () => {
+      mocks.signUp.mockResolvedValueOnce({
+        data: {
+          user: {
+            id: 'u1',
+            identities: [{ id: 'i1' }],
+            created_at: '2026-09-29T10:00:00.000Z',
+            confirmation_sent_at: '2026-09-29T10:00:01.500Z',
+          },
+          session: null,
+        },
+        error: null,
+      });
+      const result = await service.signup({ email: 'new@example.com', password: PASSWORD });
+      expect(result.message).toMatch(/^Account created/);
+    });
+
+    it('tells an existing unverified user that a new verification email was sent', async () => {
+      mocks.signUp.mockResolvedValueOnce({
+        data: {
+          user: {
+            id: 'u1',
+            identities: [{ id: 'i1' }],
+            created_at: '2026-09-20T10:00:00.000Z',
+            confirmation_sent_at: '2026-09-29T10:00:00.000Z',
+          },
+          session: null,
+        },
+        error: null,
+      });
+      const result = await service.signup({ email: 'pending@example.com', password: PASSWORD });
+      expect(result).toEqual({
+        message: expect.stringContaining('already registered but not verified'),
+        requiresEmailConfirmation: true,
+      });
+    });
+
+    it('explains when the verification email could not be sent (SMTP failure)', async () => {
+      mocks.signUp.mockResolvedValue({
+        data: { user: null, session: null },
+        error: { status: 500, code: 'unexpected_failure', message: 'Error sending confirmation email', name: 'AuthRetryableFetchError' },
+      });
+      const thrown = await expectStatus(service.signup({ email: 'user@example.com', password: PASSWORD }), 503);
+      expect(thrown.message).toContain('verification email');
+      expect(logs.some((line) => line.includes('SMTP Settings'))).toBe(true);
+    });
+
+    it('does not blame SMTP when the database failed to save the user', async () => {
+      mocks.signUp.mockResolvedValue({
+        data: { user: null, session: null },
+        error: { status: 500, code: 'unexpected_failure', message: 'Database error saving new user', name: 'AuthRetryableFetchError' },
+      });
+      const thrown = await expectStatus(service.signup({ email: 'user@example.com', password: PASSWORD }), 503);
+      expect(thrown.message).not.toContain('email');
+      expect(logs.some((line) => line.includes('migration 003'))).toBe(true);
+      expect(logs.some((line) => line.includes('SMTP'))).toBe(false);
+    });
+
+    it('asks the user to wait when a verification email was sent moments ago', async () => {
+      mocks.signUp.mockResolvedValue({ data: { user: null, session: null }, error: authError(429, 'over_email_send_rate_limit') });
+      const thrown = await expectStatus(service.signup({ email: 'user@example.com', password: PASSWORD }), 429);
+      expect(thrown.message).toContain('check your inbox');
     });
 
     it('returns 409 for a duplicate when Supabase reports it (confirm email disabled)', async () => {
@@ -261,6 +324,19 @@ describe('AuthService', () => {
       mocks.resetPasswordForEmail.mockResolvedValueOnce({ data: {}, error: authError(undefined) });
       await expectStatus(service.forgotPassword({ email: 'user@example.com' }), 503);
     });
+
+    // auth-js asal me SMTP failure (500) ko AuthRetryableFetchError ke naam se deta hai.
+    it('does not reveal an SMTP failure (real auth-js error shape) as 503', async () => {
+      const expected = await service.forgotPassword({ email: 'a@example.com' });
+      mocks.resetPasswordForEmail.mockResolvedValueOnce({ data: {}, error: retryableError(500, 'unexpected_failure') });
+      await expect(service.forgotPassword({ email: 'b@example.com' })).resolves.toEqual(expected);
+      expect(logs.some((line) => line.includes('SMTP Settings'))).toBe(true);
+    });
+
+    it.each([502, 503, 504, 522])('returns 503 when the Supabase gateway fails with %i', async (status) => {
+      mocks.resetPasswordForEmail.mockResolvedValueOnce({ data: {}, error: retryableError(status) });
+      await expectStatus(service.forgotPassword({ email: 'user@example.com' }), 503);
+    });
   });
 
   describe('resendConfirmation', () => {
@@ -268,6 +344,17 @@ describe('AuthService', () => {
       const ok = await service.resendConfirmation('user@example.com');
       mocks.resend.mockResolvedValueOnce({ data: {}, error: authError(429, 'over_email_send_rate_limit') });
       await expect(service.resendConfirmation('other@example.com')).resolves.toEqual(ok);
+    });
+
+    it('does not reveal an SMTP failure as 503', async () => {
+      const ok = await service.resendConfirmation('user@example.com');
+      mocks.resend.mockResolvedValueOnce({ data: {}, error: retryableError(500, 'unexpected_failure') });
+      await expect(service.resendConfirmation('other@example.com')).resolves.toEqual(ok);
+    });
+
+    it('returns 503 when Supabase cannot be reached', async () => {
+      mocks.resend.mockResolvedValueOnce({ data: {}, error: retryableError(0) });
+      await expectStatus(service.resendConfirmation('user@example.com'), 503);
     });
   });
 

@@ -29,6 +29,7 @@ class FakeSupabase {
     ['user-b', { id: 'user-b', full_name: 'User B', phone: null, avatar_url: null, bio: 'B secret bio', created_at: 't0', updated_at: 't0' }],
   ]);
   signUpCalls: unknown[] = [];
+  registered = new Set<string>(['a@example.com', 'b@example.com']);
 
   getClient() {
     return {
@@ -48,8 +49,13 @@ class FakeSupabase {
   createAuthClient() {
     return {
       auth: {
-        signUp: async (params: unknown) => {
+        signUp: async (params: { email: string }) => {
           this.signUpCalls.push(params);
+          // Supabase (confirm ON): verified duplicate pe khali identities wala nakli user
+          if (this.registered.has(params.email)) {
+            return { data: { user: { id: 'obfuscated', identities: [] }, session: null }, error: null };
+          }
+          this.registered.add(params.email);
           return { data: { user: { id: 'new', identities: [{}] }, session: null }, error: null };
         },
         signInWithPassword: async () => ({
@@ -288,6 +294,15 @@ describe('Auth & Profile API (HTTP)', () => {
     it('normalizes email case and spaces before calling Supabase', async () => {
       await http().post('/auth/signup').send({ email: '  MixedCase@Example.COM ', password: 'Str0ng!Passw0rd' }).expect(201);
       expect(supabase.signUpCalls[0]).toMatchObject({ email: 'mixedcase@example.com' });
+    });
+
+    it('rejects a duplicate signup, including case/space variations, with 409', async () => {
+      await http().post('/auth/signup').send({ email: 'new-user@example.com', password: 'Str0ng!Passw0rd' }).expect(201);
+      const duplicate = await http()
+        .post('/auth/signup')
+        .send({ email: '  New-User@EXAMPLE.com ', password: 'Str0ng!Passw0rd' })
+        .expect(409);
+      expect(duplicate.body.message).toContain('already exists');
     });
 
     it.each([

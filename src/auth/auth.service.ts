@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Injectable,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -13,10 +14,16 @@ import type { User } from '@supabase/supabase-js';
 import { AttemptCounter } from '../common/security/attempt-counter.js';
 import { PASSWORD_POLICY_MESSAGE } from '../common/validation/auth-fields.js';
 import {
+  DATABASE_SAVE_HINT,
   describeAuthError,
+  EMAIL_DELIVERY_HINT,
   getAuthMethods,
+  isDatabaseSaveFailure,
+  isEmailDeliveryFailure,
   isServiceFailure,
+  isSupabaseUnreachable,
   serviceUnavailable,
+  type SupabaseAuthErrorLike,
 } from '../supabase/supabase-errors.js';
 import { SupabaseService } from '../supabase/supabase.service.js';
 import { ChangeEmailDto } from './dto/change-email.dto.js';
@@ -36,6 +43,16 @@ const EMAIL_REQUEST_WINDOW_MS = 15 * 60_000;
 // Reset password sirf un tokens se jo email ke zariye mile hon (normal login token se nahi).
 const RESET_AUTH_METHODS = ['recovery', 'otp', 'magiclink'];
 
+// Naye account me confirmation email usi waqt jati hai; purane unverified account pe
+// Supabase sirf email dobara bhejta hai, is liye bhejne ka waqt account banne se kaafi baad hota hai.
+function isResentConfirmation(user: User): boolean {
+  const createdAt = Date.parse(user.created_at);
+  const sentAt = Date.parse(user.confirmation_sent_at ?? '');
+  return Number.isFinite(createdAt) && Number.isFinite(sentAt) && sentAt - createdAt > 60_000;
+}
+
+const DUPLICATE_EMAIL_MESSAGE =
+  'An account with this email already exists. Please log in or use "Forgot password"';
 const SIGNUP_MESSAGE =
   'Account created. Please check your email and verify your account before logging in.';
 const FORGOT_PASSWORD_MESSAGE =
@@ -74,9 +91,27 @@ export class AuthService {
       });
 
     if (error) {
-      this.logger.warn(`Signup failed: ${describeAuthError(error)}`);
+      if (isDatabaseSaveFailure(error)) {
+        this.logger.error(`Signup failed: ${describeAuthError(error)}. ${DATABASE_SAVE_HINT}`);
+        throw new ServiceUnavailableException(
+          'Unable to create your account right now. Please try again later',
+        );
+      }
+      this.logEmailFailure('Signup', error);
 
+      // SMTP fail: account nahi bana (Supabase transaction rollback karta hai)
+      if (isEmailDeliveryFailure(error)) {
+        throw new ServiceUnavailableException(
+          'We could not send the verification email right now. Please try again in a few minutes',
+        );
+      }
       if (isServiceFailure(error)) throw serviceUnavailable();
+      if (error.code === 'over_email_send_rate_limit') {
+        throw new HttpException(
+          'A verification email was sent recently. Please check your inbox or try again in a minute',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
       if (error.status === 429) {
         throw new HttpException(
           'Too many signup attempts. Please try again later',
@@ -94,10 +129,9 @@ export class AuthService {
       if (error.code === 'email_address_invalid') {
         throw new BadRequestException('Please enter a valid email address');
       }
-      // Sirf tab aata hai jab "Confirm email" band ho; confirm ON me Supabase
-      // duplicate pe bhi success jaisa jawab deta hai (neeche handle hai).
+      // Sirf tab aata hai jab "Confirm email" band ho (confirm ON wala case neeche hai)
       if (error.code === 'user_already_exists' || error.code === 'email_exists') {
-        throw new ConflictException('An account with this email already exists');
+        throw new ConflictException(DUPLICATE_EMAIL_MESSAGE);
       }
       throw new BadRequestException('Unable to create account');
     }
@@ -114,8 +148,22 @@ export class AuthService {
       };
     }
 
-    // Duplicate email (confirm ON): Supabase identities khali bhejta hai.
-    // Account enumeration se bachne ke liye jawab bilkul naye account jaisa hi hai.
+    // Verified account pehle se mojood (confirm ON): Supabase khali identities wala
+    // nakli user bhejta hai aur koi email nahi bhejta.
+    if (Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      throw new ConflictException(DUPLICATE_EMAIL_MESSAGE);
+    }
+
+    // Unverified account pehle se mojood: Supabase naya account nahi banata, password
+    // bhi nahi badalta, sirf verification email dobara bhejta hai.
+    if (isResentConfirmation(data.user)) {
+      return {
+        message:
+          'This email is already registered but not verified yet. We have sent a new verification email. After verifying, log in with the password you used when you first signed up.',
+        requiresEmailConfirmation: true,
+      };
+    }
+
     return { message: SIGNUP_MESSAGE, requiresEmailConfirmation: true };
   }
 
@@ -131,12 +179,10 @@ export class AuthService {
     });
 
     if (error) {
-      this.logger.warn(`Resend confirmation failed: ${describeAuthError(error)}`);
+      this.logEmailFailure('Resend confirmation', error);
       // Sirf network failure batate hain; baaki errors (rate limit, email failure)
       // account ke hone/na hone par depend karte hain, is liye generic jawab.
-      if (!error.status || error.name === 'AuthRetryableFetchError') {
-        throw serviceUnavailable();
-      }
+      if (isSupabaseUnreachable(error)) throw serviceUnavailable();
     }
 
     return { message: RESEND_MESSAGE };
@@ -208,11 +254,10 @@ export class AuthService {
       });
 
     if (error) {
-      this.logger.error(`Password reset email failed: ${describeAuthError(error)}`);
+      this.logEmailFailure('Password reset email', error);
       // Network failure har email pe same hota hai, is liye batana safe hai.
-      if (!error.status || error.name === 'AuthRetryableFetchError') {
-        throw serviceUnavailable();
-      }
+      // SMTP failure (500) sirf mojooda account pe aata hai: batane se enumeration hoti.
+      if (isSupabaseUnreachable(error)) throw serviceUnavailable();
     }
 
     return { message: FORGOT_PASSWORD_MESSAGE };
@@ -349,7 +394,7 @@ export class AuthService {
     }
 
     if (!result.status || result.status >= 500) {
-      this.logger.error(`Email change failed: status=${result.status} code=${result.code ?? 'none'}`);
+      this.logEmailFailure('Email change', result);
       throw serviceUnavailable();
     }
     if (result.code === 'email_exists' || result.code === 'user_already_exists') {
@@ -369,6 +414,18 @@ export class AuthService {
     }
     this.logger.warn(`Email change rejected: status=${result.status} code=${result.code ?? 'none'}`);
     throw new BadRequestException('Unable to change email');
+  }
+
+  // SMTP failure ko error level pe saaf hint ke saath log karte hain, kyunke client ko
+  // (enumeration ki wajah se) generic jawab jata hai aur ye sirf logs me nazar aata hai.
+  private logEmailFailure(action: string, error: SupabaseAuthErrorLike) {
+    if (isEmailDeliveryFailure(error)) {
+      this.logger.error(`${action} failed: ${describeAuthError(error)}. ${EMAIL_DELIVERY_HINT}`);
+    } else if (isSupabaseUnreachable(error)) {
+      this.logger.error(`${action} failed: ${describeAuthError(error)}`);
+    } else {
+      this.logger.warn(`${action} failed: ${describeAuthError(error)}`);
+    }
   }
 
   private async revokeSession(accessToken: string, scope: 'local' | 'global') {

@@ -36,7 +36,11 @@ The backend uses **only the Supabase anon key**. Every privileged operation (upd
    ```json
    { "message": "Account created. Please check your email and verify your account before logging in.", "requiresEmailConfirmation": true }
    ```
-6. **Duplicate email:** Supabase returns an obfuscated user without identities. The backend returns **exactly the same response** as for a new account, so signup cannot be used to discover registered emails. No second account is created.
+6. **Duplicate email** (the email is compared after trimming and lowercasing):
+   - **Verified account already exists:** Supabase returns an obfuscated user without identities and sends no email. The backend returns `409` "An account with this email already exists. Please log in or use Forgot password". No second account is created.
+   - **Unverified account already exists:** Supabase does not create a new account or change the password; it resends the verification email. The backend returns `201` with "This email is already registered but not verified yet. We have sent a new verification email…". The user logs in with the password from the first signup.
+   - Product decision: signup reports duplicates so users get a clear error. Forgot-password still never reveals whether an email exists.
+7. **Email or database failure at signup:** if Supabase cannot send the verification email (SMTP), the account is not created and the response is `503 "We could not send the verification email right now…"` (the log names the SMTP settings). A database/trigger failure returns a generic `503` (the log points to migration 003). A verification email sent within the last minute gives `429`.
 
 If Confirm email is disabled in Supabase, the backend:
 - logs a startup warning,
@@ -267,7 +271,8 @@ Edge cases from the requirements covered by the tests include: duplicate signup;
 - **Rate limits and lockouts are in memory, per server instance.** On serverless or multi-instance hosting (Vercel), counters are not shared and reset on cold start. Supabase's own limits still apply. For strict guarantees, move `AttemptCounter` to a shared store such as Redis or Upstash.
 - **Logout revokes only the current session** (`local`). A password reset revokes all sessions (`global`).
 - **Already-issued access tokens:** revocation is enforced because the guard validates every request with Supabase (`getUser`). That costs one Supabase round-trip per protected request, in exchange for immediate revocation.
-- **Duplicate signup** looks like success to the caller (anti-enumeration). A legitimate user who already has an account can use "forgot password".
+- **Duplicate signup** returns `409` (a deliberate product choice for clear UX). This reveals that an email is registered; the signup rate limit (5 per 15 min per IP) limits bulk probing. Forgot-password stays fully generic.
+- **Forgot password with broken SMTP:** the response is still the generic `200` (a 500 only happens for existing accounts, so reporting it would reveal them). The failure is logged at error level with the SMTP hint; check the backend logs or the Supabase Auth logs if emails do not arrive.
 - **Disabled (banned) users** get the same `401` as wrong credentials, so account state is not revealed.
 - **Phone numbers** must use international format (`+` and country code).
 - **Password policy** applies to new passwords only. Existing accounts with older, weaker passwords can still log in, but must meet the policy on their next reset.

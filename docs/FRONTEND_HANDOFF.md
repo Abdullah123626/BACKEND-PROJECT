@@ -6,7 +6,7 @@ This document is the complete integration guide for the frontend team.
 
 Backend base URLs:
 
-- Local: `http://localhost:3000`
+- Local: `http://localhost:3001` (the frontend runs on `http://localhost:3000`)
 - Production: use the deployed backend URL, for example `https://api.example.com`
 
 The frontend should keep the URL in an environment variable, not hard-code it in components.
@@ -14,13 +14,13 @@ The frontend should keep the URL in an environment variable, not hard-code it in
 Example frontend environment variables:
 
 ```env
-NEXT_PUBLIC_API_URL=http://localhost:3000
+NEXT_PUBLIC_API_URL=http://localhost:3001
 ```
 
 For Vite:
 
 ```env
-VITE_API_URL=http://localhost:3000
+VITE_API_URL=http://localhost:3001
 ```
 
 The backend environment variables are separate:
@@ -112,7 +112,16 @@ Success: `201 Created`
 }
 ```
 
-Signup returns no user object and no session. A **duplicate email gets exactly the same response** (the backend does not reveal registered emails); tell users who already have an account to use "Forgot password".
+Signup returns no user object and no session.
+
+Other signup responses:
+
+| Status | When | Frontend action |
+| --- | --- | --- |
+| `409` | A verified account with this email already exists | Show the message; offer links to login and "Forgot password" |
+| `201` with "already registered but not verified" | The email was registered before but never verified; a new verification email was sent | Show the check-email screen with this message (the user keeps the password from the first signup) |
+| `503` "We could not send the verification email…" | Email delivery failed; no account was created | Ask the user to try again later |
+| `429` | A verification email was sent moments ago, or too many signups | Show the message; do not retry immediately |
 
 The frontend should always treat signup as a verification-pending state. Show a check-email screen and send the user to the login screen only after they verify the email. The backend does not allow an unverified user to log in.
 
@@ -132,7 +141,7 @@ Success: `200 OK`
 
 ```json
 {
-  "message": "If the account exists, a confirmation email has been sent."
+  "message": "If an unverified account exists for this email, a confirmation email has been sent."
 }
 ```
 
@@ -182,7 +191,13 @@ Unverified login: `403 Forbidden`
 }
 ```
 
-### 3.3 Forgot password
+Other login responses:
+
+- `401 Invalid email or password` for a wrong password, unknown email, or a deleted or disabled account. It is always the same message; do not try to tell these cases apart.
+- `429` after 5 failed attempts for the same email from the same device/IP (locked for 15 minutes). Show the returned message, which includes the wait time.
+- A `401` from `/auth/login` is a wrong-credentials error. Do **not** call `/auth/refresh` for it.
+
+### 3.4 Forgot password
 
 `POST /auth/forgot-password`
 
@@ -198,7 +213,7 @@ Success: `200 OK`
 
 ```json
 {
-  "message": "If an account exists, a password reset email has been sent."
+  "message": "If an account exists for this email, a password reset link has been sent."
 }
 ```
 
@@ -212,7 +227,7 @@ The backend asks Supabase to send the email with this redirect:
 
 The frontend must have a `/reset-password` page.
 
-### 3.4 Reset password
+### 3.5 Reset password
 
 `POST /auth/reset-password`
 
@@ -239,7 +254,7 @@ Only the token from the reset email is accepted; a normal login access token is 
 
 Do not send the refresh token to this endpoint. Do not put the access token in application logs, analytics, query strings, or error reports.
 
-### 3.5 Refresh session
+### 3.6 Refresh session
 
 `POST /auth/refresh`
 
@@ -271,7 +286,7 @@ Success: `200 OK`
 
 Supabase may rotate the refresh token. Always replace the old refresh token with the returned one.
 
-### 3.6 Logout
+### 3.7 Logout
 
 `POST /auth/logout`
 
@@ -295,7 +310,7 @@ Success: `200 OK`
 
 The frontend must clear its local access token, refresh token, user state, and cached profile after calling logout, even if the user is already expired.
 
-### 3.7 Get current profile
+### 3.8 Get current profile
 
 `GET /profiles/me`
 
@@ -323,7 +338,7 @@ Success: `200 OK`
 
 The database response uses snake_case names. `role` comes from verified Supabase `app_metadata` and is read-only. If no role is configured, the backend returns `user`. Frontend models may map these to `fullName`, `avatarUrl`, and so on, but requests must use the update request names below.
 
-### 3.8 Update current profile
+### 3.9 Update current profile
 
 `PATCH /profiles/me`
 
@@ -359,7 +374,7 @@ Success: `200 OK`, returning the updated profile in the same shape as `GET /prof
 
 If a profile is missing, `GET /profiles/me` creates an empty one, so the frontend does not need a 404 "profile setup" state.
 
-### 3.9 Change email
+### 3.10 Change email
 
 `POST /auth/change-email` (requires `Authorization: Bearer <accessToken>`)
 
@@ -396,7 +411,7 @@ Validation errors may return an array:
 ```json
 {
   "statusCode": 400,
-  "message": ["password must be longer than or equal to 12 characters"],
+  "message": ["Password must be 12-72 characters and include an uppercase letter, a lowercase letter, a number and a symbol"],
   "error": "Bad Request"
 }
 ```
@@ -428,8 +443,8 @@ Before frontend testing:
 
 1. Open Supabase Dashboard > Authentication > URL Configuration.
 2. Set the Site URL to the deployed frontend URL.
-3. Add the local frontend URL, such as `http://localhost:3001`, to Redirect URLs.
-4. Ensure the reset URL is allowed: `http://localhost:3001/reset-password` and the production equivalent.
+3. Add these to Redirect URLs: `<frontend>/login` and `<frontend>/reset-password` (both the deployed frontend and `http://localhost:3000`).
+4. The confirmation email redirects to `/login` and the reset email to `/reset-password`, so the frontend must have both pages.
 5. Confirm the email provider settings required by the project.
 6. In Supabase Authentication > Providers > Email, keep **Confirm email** enabled.
 7. Run the SQL files in `supabase/migrations` in order (`001` to `004`).
@@ -461,7 +476,7 @@ Use the supplied `frontend-integration/api-client.ts` as a starting point. It is
 A generic deployment sequence for Render, Railway, Fly.io, or another Node host:
 
 1. Deploy the `backend` directory as a Node/NestJS service.
-2. Install command: `npm ci`.
+2. Install command: `npm ci --include=dev` (the Nest CLI needed for the build is a dev dependency).
 3. Build command: `npm run build`.
 4. Start command: `npm run start:prod`.
 5. Do not set `PORT`; the host provides it.

@@ -17,6 +17,33 @@ export function isServiceFailure(error: SupabaseAuthErrorLike): boolean {
 	);
 }
 
+// Request Supabase tak pohanchi hi nahi, ya gateway/infra down hai (502-504, Cloudflare 52x).
+// Ye har email pe ek jaisa hota hai, is liye client ko batana safe hai.
+// Note: auth-js 500 ko bhi AuthRetryableFetchError banata hai, lekin email flows me 500
+// aksar SMTP failure hota hai jo sirf mojooda accounts pe aata hai; is liye 500 yahan shamil nahi.
+export function isSupabaseUnreachable(error: SupabaseAuthErrorLike): boolean {
+	const status = error.status;
+	if (!status) return true;
+	return [502, 503, 504].includes(status) || (status >= 520 && status <= 530);
+}
+
+// Email flows (signup/resend/forgot/change-email) me Supabase ka 500 = email bhej nahi saka.
+export function isEmailDeliveryFailure(error: SupabaseAuthErrorLike): boolean {
+	return error.status === 500;
+}
+
+// Signup ka 500 do wajah se ho sakta hai: email na bhej saka, ya database (profile trigger) fail.
+// Supabase ka message sirf yahan farq karne ke liye dekhte hain, log/client ko nahi bhejte.
+export function isDatabaseSaveFailure(error: SupabaseAuthErrorLike): boolean {
+	return error.status === 500 && /database error/i.test(error.message ?? '');
+}
+
+export const DATABASE_SAVE_HINT =
+	'Supabase could not save the new user: check the profiles trigger (migration 003) and the Postgres logs in the Supabase dashboard';
+
+export const EMAIL_DELIVERY_HINT =
+	'Supabase could not send the email: check Authentication > Emails > SMTP Settings and the Auth logs in the Supabase dashboard';
+
 export function serviceUnavailable(): ServiceUnavailableException {
 	return new ServiceUnavailableException(
 		'Authentication service is temporarily unavailable. Please try again shortly',
