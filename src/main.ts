@@ -7,12 +7,15 @@ async function bootstrap() {
   // nest server application creation
   const app = await NestFactory.create(AppModule);
   configureApp(app);
+  
   // API docs: /docs (UI) aur /docs/json (OpenAPI)
   setupSwagger(app);
 
-  // Server Start - Vercel/Render khud PORT dete hain, is liye process.env.PORT pehle
-  await app.listen(process.env.PORT ?? 3000);
+  const port = Number(process.env.PORT) || 3000;
+  
+  // Railway container ke liye '0.0.0.0' host add karna lazmi hai
+  await app.listen(port, '0.0.0.0');
+  console.log(`Application is running on port: ${port}`);
 }
 
-// Vercel ke official NestJS pattern ki tarah top-level await ke baghair
 void bootstrap();
